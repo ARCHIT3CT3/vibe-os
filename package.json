@@ -1,0 +1,41 @@
+{
+  "name": "archit3ct3",
+  "version": "0.1.0",
+  "description": "Modular TypeScript infrastructure with sandboxed execution",
+  "type": "module",
+  "main": "./dist/api/terminal.js",
+  "bin": {
+    "archit3ct3": "./dist/api/terminal.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/api/terminal.js",
+      "types": "./dist/api/terminal.d.ts"
+    },
+    "./core": {
+      "import": "./dist/core/dispatcher.js",
+      "types": "./dist/core/dispatcher.d.ts"
+    },
+    "./lib": {
+      "import": "./dist/lib/executor.js",
+      "types": "./dist/lib/executor.d.ts"
+    },
+    "./security": {
+      "import": "./dist/security/shield.js",
+      "types": "./dist/security/shield.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node ./dist/api/terminal.js"
+  },
+  "keywords": ["typescript", "sandbox", "security", "executor", "hooks"],
+  "author": "ARCHIT3CT3",
+  "license": "MIT",
+  "engines": { "node": ">=18.0.0" },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}
