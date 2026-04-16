@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "description": "Modular TypeScript infrastructure with sandboxed execution",
   "type": "module",
-  "main": "./dist/api/terminal.js",
+  "main": "./dist/index.js",
   "bin": {
     "archit3ct3": "./dist/api/terminal.js"
   },
   "exports": {
     ".": {
-      "import": "./dist/api/terminal.js",
-      "types": "./dist/api/terminal.d.ts"
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
     },
     "./core": {
       "import": "./dist/core/dispatcher.js",
@@ -28,7 +28,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "start": "node ./dist/api/terminal.js"
+    "start": "npx tsc && node dist/index.js"
   },
   "keywords": ["typescript", "sandbox", "security", "executor", "hooks"],
   "author": "ARCHIT3CT3",

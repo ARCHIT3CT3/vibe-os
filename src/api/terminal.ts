@@ -1,216 +1,120 @@
 /**
- * CLI Entry Point
- * Accepts JSON via stdin, outputs structured JSON to stdout
+ * Interactive Terminal Interface
+ * Real-time command loop with colored prompts
  */
 
-import { createInterface } from 'readline';
-import { CommandDispatcher } from '../core/dispatcher.js';
-import { SandboxedExecutor } from '../lib/executor.js';
-import { Shield } from '../security/shield.js';
-import type { CommandPayload, ExecutionResult, Hook } from '../types/index.js';
+import { createInterface } from 'readline/promises';
+import type { CommandDispatcher } from '../core/dispatcher.js';
+import type { CommandPayload } from '../types/index.js';
 
-interface CLIConfig {
-  debug: boolean;
-  prettyPrint: boolean;
-}
+/** Colors for terminal output */
+const COLOR = {
+  cyan: '\x1b[36m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  red: '\x1b[31m',
+  gray: '\x1b[90m',
+  reset: '\x1b[0m',
+};
 
-class TerminalAPI {
-  readonly #dispatcher: CommandDispatcher;
-  readonly #config: CLIConfig;
-
-  constructor(config: Partial<CLIConfig> = {}) {
-    this.#config = {
-      debug: false,
-      prettyPrint: false,
-      ...config,
-    };
-
-    this.#dispatcher = new CommandDispatcher({
-      maxQueueSize: 50,
-      defaultTimeout: 5000,
-    });
-  }
-
-  async init(): Promise<void> {
-    await this.#initializeModules();
-  }
-
-  async #initializeModules(): Promise<void> {
-    const executor = new SandboxedExecutor();
-    const shield = new Shield();
-
-    this.#dispatcher
-      .registerHandler('sh.exec', executor)
-      .registerHandler('shell.exec', executor)
-      .registerHook(shield)
-      .registerHook(this.#createAuditHook());
-
-    const plugins = await this.#dispatcher.initialize();
-    for (const plugin of plugins) {
-      const shieldCheck = shield.verifyPlugin(plugin.instance);
-      if (!shieldCheck.valid) {
-        console.error(`[SHIELD] Plugin ${plugin.manifest.name} failed verification: ${shieldCheck.errors.join(', ')}`);
-        continue;
-      }
-      console.error(`[PLUGIN] Loaded: ${plugin.manifest.name} v${plugin.manifest.version}`);
-    }
-  }
-
-  #createAuditHook(): Hook {
-    return {
-      name: 'audit-logger',
-      phase: 'post-execute',
-      priority: 999,
-      execute: (context) => {
-        const result = context.result;
-        if (this.#config.debug && result) {
-          const timestamp = new Date().toISOString();
-          console.error(`[AUDIT ${timestamp}] ${context.payload.action}: ${result.status}`);
-        }
-        return context;
-      },
-    };
-  }
-
-  async run(): Promise<void> {
+/**
+ * Interactive terminal for real-time VibeOS command input
+ *
+ * @example
+ * ```typescript
+ * const terminal = new TerminalInterface();
+ * await terminal.start(dispatcher);
+ * // VibeOS > ping
+ * // { status: 'success', data: { message: 'pong: ping' } }
+ * ```
+ */
+export class TerminalInterface {
+  /**
+   * Start the interactive command loop
+   * @param dispatcher - The initialized CommandDispatcher
+   */
+  async start(dispatcher: CommandDispatcher): Promise<void> {
     const rl = createInterface({
       input: process.stdin,
       output: process.stdout,
-      terminal: false,
     });
 
-    const lines: string[] = [];
+    console.log(`${COLOR.gray}Type a command or 'exit' to quit${COLOR.reset}\n`);
 
-    rl.on('line', (line) => {
-      lines.push(line);
-    });
+    while (true) {
+      const input = await rl.question(`${COLOR.yellow}VibeOS > ${COLOR.reset}`);
+      const trimmed = input.trim();
 
-    await new Promise<void>((resolve) => {
-      rl.on('close', () => resolve());
-    });
+      if (trimmed === 'exit') {
+        console.log(`${COLOR.green}Shutting down VibeOS...${COLOR.reset}`);
+        rl.close();
+        process.exit(0);
+      }
 
-    const input = lines.join('\n');
+      if (!trimmed) {
+        continue;
+      }
 
-    if (!input.trim()) {
-      this.#outputResult({
-        status: 'error',
-        error: 'Empty input received',
-        logs: [],
-      });
-      return;
-    }
+      try {
+        // Parse simple command or JSON
+        const payload = this.#parseInput(trimmed);
+        const result = await dispatcher.dispatch(payload);
 
-    try {
-      const payload = this.#parseInput(input);
-      const result = await this.#dispatcher.dispatch(payload);
-      this.#outputResult(result);
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.#outputResult({
-        status: 'error',
-        error: `Failed to process input: ${errorMsg}`,
-        logs: [],
-      });
+        // Display result
+        if (result.status === 'success') {
+          console.log(`${COLOR.green}✓ ${JSON.stringify(result.data)}${COLOR.reset}`);
+        } else if (result.status === 'blocked') {
+          console.log(`${COLOR.red}✗ Blocked: ${result.error}${COLOR.reset}`);
+        } else {
+          console.log(`${COLOR.red}✗ Error: ${result.error}${COLOR.reset}`);
+        }
+
+        if (result.logs && result.logs.length > 0) {
+          console.log(`${COLOR.gray}${result.logs.join('\n')}${COLOR.reset}`);
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.log(`${COLOR.red}✗ Parse error: ${msg}${COLOR.reset}`);
+      }
     }
   }
 
+  /**
+   * Parse user input into CommandPayload
+   * Supports: simple commands like "ping" or JSON like {"action":"ping"}
+   */
   #parseInput(input: string): CommandPayload {
     const trimmed = input.trim();
 
-    if (trimmed === '--help' || trimmed === '-h') {
-      this.#printHelp();
-      process.exit(0);
-    }
-
-    if (trimmed === '--version' || trimmed === '-v') {
-      console.log('0.1.0');
-      process.exit(0);
-    }
-
-    try {
-      const parsed = JSON.parse(trimmed) as unknown;
-
-      if (typeof parsed !== 'object' || parsed === null) {
-        throw new Error('Input must be a JSON object');
+    // Try JSON parsing first
+    if (trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+        if (typeof parsed.action !== 'string') {
+          throw new Error('JSON must have an "action" field');
+        }
+        return {
+          action: parsed.action,
+          params: (parsed.params as Record<string, unknown>) ?? {},
+        };
+      } catch (e) {
+        if (e instanceof SyntaxError) {
+          throw new Error(`Invalid JSON: ${e.message}`);
+        }
+        throw e;
       }
-
-      const obj = parsed as Record<string, unknown>;
-
-      if (typeof obj.action !== 'string' || !obj.action) {
-        throw new Error('Missing or invalid "action" field');
-      }
-
-      return {
-        action: obj.action,
-        params: (obj.params as Record<string, unknown>) ?? {},
-      };
-    } catch (e) {
-      if (e instanceof SyntaxError) {
-        throw new Error(`Invalid JSON: ${e.message}`);
-      }
-      throw e;
     }
-  }
 
-  #outputResult(result: ExecutionResult): void {
-    const output = this.#config.prettyPrint
-      ? JSON.stringify(result, null, 2)
-      : JSON.stringify(result);
-    console.log(output);
-  }
+    // Simple command format: "action" or "action param1 param2"
+    const parts = trimmed.split(/\s+/);
+    const action = parts[0]!;
+    const params: Record<string, unknown> = {};
 
-  #printHelp(): void {
-    console.log(`
-ARCHIT3CT3 Terminal API
-
-Usage:
-  echo '{"action":"sh.exec","params":{"command":"ls"}}' | node terminal.js
-
-Input Format:
-  {
-    "action": "sh.exec",
-    "params": {
-      "command": "ls",
-      "args": ["-la"],
-      "cwd": "./subdir"
+    // If there are additional args, treat them as message/command parameter
+    if (parts.length > 1) {
+      params.message = parts.slice(1).join(' ');
     }
-  }
 
-Output Format:
-  {
-    "status": "success|error|blocked|timeout",
-    "data": { ... },
-    "logs": ["..."],
-    "executionTime": 123
-  }
-
-Options:
-  -h, --help     Show this help
-  -v, --version  Show version
-`);
-  }
-
-  getDispatcher(): CommandDispatcher {
-    return this.#dispatcher;
+    return { action, params };
   }
 }
-
-async function main(): Promise<void> {
-  const debug = process.argv.includes('--debug') || process.env.DEBUG === '1';
-  const pretty = process.argv.includes('--pretty');
-
-  const terminal = new TerminalAPI({ debug, prettyPrint: pretty });
-  await terminal.init();
-  await terminal.run();
-}
-
-main().catch((err) => {
-  console.error(JSON.stringify({
-    status: 'error',
-    error: err instanceof Error ? err.message : String(err),
-    logs: [],
-  }));
-  process.exit(1);
-});
-
-export { TerminalAPI };
